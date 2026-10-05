@@ -1,0 +1,58 @@
+name: Sync Markdown to Confluence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: list what would be uploaded, change nothing"
+        type: boolean
+        default: false
+
+# one sync at a time, in push order
+concurrency:
+  group: confluence-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, so the previous commit can be compared
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .github/confluence-sync/requirements.txt
+
+      - run: pip install -r .github/confluence-sync/requirements.txt
+
+      - name: Upload pages
+        env:
+          CONFLUENCE_BASE_URL: ${{ vars.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_SPACE_KEY: ${{ vars.CONFLUENCE_SPACE_KEY }}
+          CONFLUENCE_PARENT_ID: ${{ vars.CONFLUENCE_PARENT_ID }}
+          CONFLUENCE_IGNORE: ${{ vars.CONFLUENCE_IGNORE }}
+          DOCS_DIR: ${{ vars.DOCS_DIR || '.' }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS=()
+          [ "$DRY_RUN" = "true" ] && ARGS+=(--dry-run)
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            python .github/confluence-sync/sync.py --all "${ARGS[@]}"      # manual run: every page
+          else
+            python .github/confluence-sync/sync.py --since "$BEFORE"        # push: changed pages only
+          fi
